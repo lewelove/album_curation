@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import sys
 import os
 import glob
@@ -29,7 +30,6 @@ def calculate_ids(folder_path):
     files = glob.glob(pattern)
     
     if not files:
-        print(f"No .flac files found in {folder_path}")
         sys.exit(1)
         
     files = sorted(files, key=get_sort_key)
@@ -48,7 +48,7 @@ def calculate_ids(folder_path):
     try:
         disc = discid.put(1, len(files), leadout, offsets)
         mbid = disc.id
-        freedb = disc.freedb_id
+        freedb = disc.freedb_id.upper()
     except Exception:
         mbid = "Error"
         freedb = "Error"
@@ -68,7 +68,7 @@ def calculate_ids(folder_path):
     id2 &= 0xFFFFFFFF
     
     if freedb != "Error":
-        accuraterip = f"{id1:08x}-{id2:08x}-{freedb}"
+        accuraterip = f"{id1:08x}-{id2:08x}-{freedb.lower()}"
     else:
         accuraterip = "Error"
 
@@ -81,10 +81,6 @@ def calculate_ids(folder_path):
     sha1 = hashlib.sha1(x.ljust(800, '0').encode('ascii')).digest()
     ctdb = base64.b64encode(sha1).decode('ascii').replace('+', '.').replace('/', '_').replace('=', '-')
 
-    print(f"Directory processed : {folder_path}")
-    print(f"Tracks              : {len(files)}")
-    print(f"Total Sectors       : {leadout}")
-    print("-" * 50)
     print(f"MUSICBRAINZ DISCID  : {mbid}")
     print(f"FREEDB DISCID       : {freedb}")
     print(f"ACCURATERIP ID      : {accuraterip}")
@@ -92,14 +88,12 @@ def calculate_ids(folder_path):
     print("-" * 50)
     print(f"CUETools DB URL     : http://db.cuetools.net/?tocid={ctdb}")
     print(f"MusicBrainz URL     : https://musicbrainz.org/cdtoc/{mbid}")
-    
     print("-" * 50)
-    print(f'CTDBTOCID = "{ctdb}"')
+    print(f'DISCID = "{freedb}"')
+    print(f'CTDBID = "{ctdb}"')
     print(f'ACCURATERIPID = "{accuraterip}"')
-    print(f'MUSICBRAINZ_DISCID = "{mbid}"')
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: discid {folder_path}")
         sys.exit(1)
     calculate_ids(sys.argv[1])

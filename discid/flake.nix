@@ -23,32 +23,23 @@
               echo "Usage: discid {folder/path}"
               exit 1
             fi
-            
             export LD_LIBRARY_PATH="${pkgs.libdiscid}/lib"
-            
             exec python ${./id.py} "$1"
           '';
         };
       in
       {
-        packages = {
-          default = discidScript;
-          discid = discidScript;
-        };
+        packages.discid = discidScript;
         
-        apps = {
-          default = {
-            type = "app";
-            program = "${discidScript}/bin/discid";
-          };
-          discid = {
-            type = "app";
-            program = "${discidScript}/bin/discid";
-          };
-        };
-
         devShells.default = pkgs.mkShell {
-          nativeBuildInputs = [ discidScript ];
+          packages = [ 
+            pythonEnv 
+            pkgs.libdiscid 
+            discidScript 
+          ];
+          shellHook = ''
+            export LD_LIBRARY_PATH="${pkgs.libdiscid}/lib"
+          '';
         };
       }
     );
