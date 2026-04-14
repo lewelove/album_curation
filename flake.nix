@@ -42,11 +42,7 @@
           name = "album_write";
           runtimeInputs = [ pythonEnv ];
           text = ''
-            if [ -z "''${1:-}" ]; then
-              echo "Usage: album_write {folder/path}"
-              exit 1
-            fi
-            exec python ${./album_write/write.py} "$1"
+            exec python ${./album_write}/write.py "''${1:-.}"
           '';
         };
 
