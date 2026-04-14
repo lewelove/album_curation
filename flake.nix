@@ -14,18 +14,27 @@
           discid
           mutagen
           xxhash
+          musicbrainzngs
         ]);
         
         discidScript = pkgs.writeShellApplication {
           name = "discid";
           runtimeInputs = [ pythonEnv pkgs.libdiscid ];
           text = ''
+            export LD_LIBRARY_PATH="${pkgs.libdiscid}/lib"
+            exec python ${./discid/id.py} "''${1:-.}"
+          '';
+        };
+
+        mbidScript = pkgs.writeShellApplication {
+          name = "mbid";
+          runtimeInputs = [ pythonEnv ];
+          text = ''
             if [ -z "''${1:-}" ]; then
-              echo "Usage: discid {folder/path}"
+              echo "Usage: mbid {musicbrainz_url}"
               exit 1
             fi
-            export LD_LIBRARY_PATH="${pkgs.libdiscid}/lib"
-            exec python ${./discid/id.py} "$1"
+            exec python ${./mbid/mbid.py} "$1"
           '';
         };
 
@@ -40,11 +49,27 @@
             exec python ${./album_write/write.py} "$1"
           '';
         };
+
+        buildAll = pkgs.writeShellScriptBin "build" ''
+          nix build .#discid -o discid/.build
+          nix build .#mbid -o mbid/.build
+          nix build .#album_write -o album_write/.build
+          echo "[+] Done. Binaries are in {util_name}/.build/"
+        '';
       in
       {
         packages = {
           discid = discidScript;
+          mbid = mbidScript;
           album_write = albumWriteScript;
+          build = buildAll;
+        };
+
+        apps = {
+          build = {
+            type = "app";
+            program = "${buildAll}/bin/build";
+          };
         };
         
         devShells.default = pkgs.mkShell {
@@ -52,7 +77,9 @@
             pythonEnv 
             pkgs.libdiscid 
             discidScript
+            mbidScript
             albumWriteScript
+            buildAll
           ];
           shellHook = ''
             export LD_LIBRARY_PATH="${pkgs.libdiscid}/lib"

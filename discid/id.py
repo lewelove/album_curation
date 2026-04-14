@@ -91,9 +91,8 @@ def calculate_ids(folder_path):
     print("-" * 50)
     print(f'DISCID = "{freedb}"')
     print(f'CTDBID = "{ctdb}"')
-    print(f'ACCURATERIPID = "{accuraterip}"')
+    print(f'ACCURIPID = "{accuraterip}"')
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        sys.exit(1)
-    calculate_ids(sys.argv[1])
+    target = sys.argv[1] if len(sys.argv) > 1 else "."
+    calculate_ids(target)
