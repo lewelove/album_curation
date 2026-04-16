@@ -15,6 +15,8 @@
           mutagen
           xxhash
           musicbrainzngs
+          requests
+          python-dotenv
         ]);
         
         discidScript = pkgs.writeShellApplication {
