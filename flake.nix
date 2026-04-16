@@ -42,7 +42,15 @@
           name = "album_write";
           runtimeInputs = [ pythonEnv ];
           text = ''
-            exec python ${./album_write}/write.py "''${1:-.}"
+            exec python ${./album_write/write.py} "''${1:-.}"
+          '';
+        };
+
+        albumSplitScript = pkgs.writeShellApplication {
+          name = "album_split";
+          runtimeInputs = [ pkgs.shntool pkgs.cuetools pkgs.flac ];
+          text = ''
+            exec bash ${./album_split/split.sh} "''${1:-.}"
           '';
         };
 
@@ -50,6 +58,7 @@
           nix build .#discid -o discid/.build
           nix build .#mbid -o mbid/.build
           nix build .#album_write -o album_write/.build
+          nix build .#album_split -o album_split/.build
           echo "[+] Done. Binaries are in {util_name}/.build/"
         '';
       in
@@ -58,6 +67,7 @@
           discid = discidScript;
           mbid = mbidScript;
           album_write = albumWriteScript;
+          album_split = albumSplitScript;
           build = buildAll;
         };
 
@@ -75,6 +85,7 @@
             discidScript
             mbidScript
             albumWriteScript
+            albumSplitScript
             buildAll
           ];
           shellHook = ''

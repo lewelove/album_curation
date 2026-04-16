@@ -39,6 +39,7 @@ def main():
         catno = label_info.get("catalog-number", "")
         
         print(f'ORIGINAL_YYYY_MM = "{format_date(original_date)}"')
+        print()
         print(f'COUNTRY = "{country}"')
         print(f'LABEL = "{label}"')
         print(f'CATALOGNUMBER = "{catno}"')
