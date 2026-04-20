@@ -86,12 +86,7 @@ def calculate_ids(folder_path):
     print(f"ACCURATERIP ID      : {accuraterip}")
     print(f"CTDB TOCID          : {ctdb}")
     print("-" * 50)
-    print(f"CUETools DB URL     : http://db.cuetools.net/?tocid={ctdb}")
-    print(f"MusicBrainz URL     : https://musicbrainz.org/cdtoc/{mbid}")
-    print("-" * 50)
-    print(f'DISCID = "{freedb}"')
-    print(f'CTDBID = "{ctdb}"')
-    print(f'ACCURIPID = "{accuraterip}"')
+    print(f'CTDBID_URL = "http://db.cuetools.net/?tocid={ctdb}"')
 
 if __name__ == "__main__":
     target = sys.argv[1] if len(sys.argv) > 1 else "."

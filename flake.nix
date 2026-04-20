@@ -56,11 +56,20 @@
           '';
         };
 
+        coverResizeScript = pkgs.writeShellApplication {
+          name = "cover_resize";
+          runtimeInputs = [ pkgs.imagemagick ];
+          text = ''
+            exec bash ${./cover_resize/resize.sh} "$@"
+          '';
+        };
+
         buildAll = pkgs.writeShellScriptBin "build" ''
           nix build .#discid -o discid/.build
           nix build .#mbid -o mbid/.build
           nix build .#album_write -o album_write/.build
           nix build .#album_split -o album_split/.build
+          nix build .#cover_resize -o cover_resize/.build
           echo "[+] Done. Binaries are in {util_name}/.build/"
         '';
       in
@@ -70,6 +79,7 @@
           mbid = mbidScript;
           album_write = albumWriteScript;
           album_split = albumSplitScript;
+          cover_resize = coverResizeScript;
           build = buildAll;
         };
 
@@ -88,6 +98,7 @@
             mbidScript
             albumWriteScript
             albumSplitScript
+            coverResizeScript
             buildAll
           ];
           shellHook = ''

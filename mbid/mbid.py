@@ -74,14 +74,16 @@ def main():
     try:
         release = musicbrainzngs.get_release_by_id(
             release_id, 
-            includes=["labels", "release-groups", "url-rels"]
+            includes=["labels", "release-groups", "url-rels", "recordings", "artist-credits"]
         )["release"]
         
         rg_id = release["release-group"]["id"]
         release_group = musicbrainzngs.get_release_group_by_id(rg_id)["release-group"]
         
+        album_artist = release.get("artist-credit-phrase", "")
+        album_title = release.get("title", "")
+        release_date = release.get("date", "")
         original_date = release_group.get("first-release-date", "")
-        specific_date = release.get("date", "")
         country = release.get("country", "")
         
         label_info = release.get("label-info-list", [{}])[0]
@@ -91,6 +93,21 @@ def main():
         styles_list, d_url = get_discogs_data(release)
         styles_str = "; ".join(styles_list) if styles_list else ""
         
+        tracks = []
+        for medium in release.get("medium-list", []):
+            for track in medium.get("track-list", []):
+                tracks.append({
+                    "number": int(track["number"]),
+                    "title": track["recording"]["title"]
+                })
+
+        print("[album]")
+        print()
+        print(f'ALBUMARTIST = "{album_artist}"')
+        print(f'ALBUM = "{album_title}"')
+        print(f'DATE = "{release_date[:4] if release_date else ""}"')
+        print()
+        print(f'GENRE = "Alternative"')
         print(f'STYLES = "{styles_str}"')
         print()
         print(f'ORIGINAL_YYYY_MM = "{format_date(original_date)}"')
@@ -98,10 +115,25 @@ def main():
         print(f'COUNTRY = "{country}"')
         print(f'LABEL = "{label}"')
         print(f'CATALOGNUMBER = "{catno}"')
-        print(f'RELEASE_YYYY_MM = "{format_date(specific_date)}"')
+        print(f'RELEASE_YYYY_MM = "{format_date(release_date)}"')
         print()
         print(f'DISCOGS_URL = "{d_url}"')
         print(f'MUSICBRAINZ_URL = "https://musicbrainz.org/release/{release_id}"')
+        print(f'CTDBID_URL = ""')
+        print()
+        print(f'UNIX_GENERATED = {int(time.time())}')
+        print()
+        
+        if tracks:
+            print("[[tracks]]")
+            print(f'TRACKNUMBER = {tracks[0]["number"]}')
+            print(f'TITLE = "{tracks[0]["title"]}"')
+        
+        for i in range(1, len(tracks)):
+            print("[[tracks]]")
+            print(f'TRACKNUMBER = {tracks[i]["number"]}')
+            print(f'TITLE = "{tracks[i]["title"]}"')
+            print()
             
     except Exception as e:
         sys.stderr.write(f"Error: {str(e)}\n")
