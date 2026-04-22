@@ -131,107 +131,124 @@ def toml_val(v):
         return str(v)
     return f'"{v}"'
 
-def get_discogs_data(mb_release):
+def get_discogs_data(mb_obj, is_rg=False):
     if not DISCOGS_TOKEN:
         return {"error": "Missing token"}
     discogs_url = ""
-    for rel in mb_release.get("url-relation-list", []):
-        if "discogs.com/release/" in rel["target"]:
+    for rel in mb_obj.get("url-relation-list", []):
+        if "discogs.com/release/" in rel["target"] or "discogs.com/master/" in rel["target"]:
             discogs_url = rel["target"]
             break
     if not discogs_url:
         return {"error": "No relation"}
-    match = re.search(r"release/(\d+)", discogs_url)
-    if not match:
-        return {"error": "No ID"}
-    release_id = match.group(1)
+    m_rel = re.search(r"release/(\d+)", discogs_url)
+    m_mas = re.search(r"master/(\d+)", discogs_url)
     headers = {"User-Agent": "AlbumCuration/0.1", "Authorization": f"Discogs token={DISCOGS_TOKEN}"}
+    result = {}
     try:
-        r_resp = requests.get(f"https://api.discogs.com/releases/{release_id}", headers=headers)
-        r_resp.raise_for_status()
-        rel_data = r_resp.json()
-        result = {"release": rel_data}
-        master_id = rel_data.get("master_id")
-        if master_id:
-            time.sleep(1)
-            m_resp = requests.get(f"https://api.discogs.com/masters/{master_id}", headers=headers)
-            if m_resp.status_code == 200:
-                result["master"] = m_resp.json()
+        if m_rel:
+            r_resp = requests.get(f"https://api.discogs.com/releases/{m_rel.group(1)}", headers=headers)
+            r_resp.raise_for_status()
+            rel_data = r_resp.json()
+            result["release"] = rel_data
+            master_id = rel_data.get("master_id")
+            if master_id:
+                time.sleep(1)
+                m_resp = requests.get(f"https://api.discogs.com/masters/{master_id}", headers=headers)
+                if m_resp.status_code == 200:
+                    result["master"] = m_resp.json()
+        elif m_mas:
+            m_resp = requests.get(f"https://api.discogs.com/masters/{m_mas.group(1)}", headers=headers)
+            m_resp.raise_for_status()
+            result["master"] = m_resp.json()
         return result
     except Exception as e:
         return {"error": str(e)}
 
 def fetch_remote_metadata(url):
-    match = re.search(r"release/([a-f0-9\-]+)", url)
-    if not match:
-        return None
-    release_id = match.group(1)
+    is_rg = "release-group/" in url
+    m = re.search(r"(release|release-group)/([a-f0-9\-]+)", url)
+    if not m: return None
+    mode, entity_id = m.groups()
     cache_dir = Path.home() / ".cache" / "discid"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_file = cache_dir / f"release-{release_id}.json"
+    cache_file = cache_dir / f"{'rg' if is_rg else 'rel'}-{entity_id}.json"
     if cache_file.exists():
         with open(cache_file, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+            data["_is_rg"] = is_rg
+            return data
     musicbrainzngs.set_useragent("album_curation", "0.1")
-    release = musicbrainzngs.get_release_by_id(
-        release_id, 
-        includes=["labels", "release-groups", "url-rels", "recordings", "artist-credits"]
-    )["release"]
-    rg_id = release["release-group"]["id"]
-    release_group = musicbrainzngs.get_release_group_by_id(
-        rg_id, 
-        includes=["tags", "url-rels", "artist-credits"]
-    )["release-group"]
-    discogs = get_discogs_data(release)
-    data = {"musicbrainz": {"release": release, "release_group": release_group}, "discogs": discogs}
+    data = {"_is_rg": is_rg}
+    if is_rg:
+        rg = musicbrainzngs.get_release_group_by_id(entity_id, includes=["tags", "url-rels", "artist-credits"])["release-group"]
+        data["musicbrainz"] = {"release_group": rg}
+        data["discogs"] = get_discogs_data(rg, is_rg=True)
+    else:
+        release = musicbrainzngs.get_release_by_id(entity_id, includes=["labels", "release-groups", "url-rels", "recordings", "artist-credits"])["release"]
+        rg_id = release["release-group"]["id"]
+        rg = musicbrainzngs.get_release_group_by_id(rg_id, includes=["tags", "url-rels", "artist-credits"])["release-group"]
+        data["musicbrainz"] = {"release": release, "release_group": rg}
+        data["discogs"] = get_discogs_data(release)
     with open(cache_file, "w") as f:
         json.dump(data, f, indent=2, sort_keys=True)
     return data
 
 def get_mbid_lines(data):
+    is_rg = data.get("_is_rg", False)
     mb = data["musicbrainz"]
-    rel = mb["release"]
     rg = mb["release_group"]
-    album_artist = join_artists(rel["artist-credit"])
+    rel = mb.get("release")
+    dg = data.get("discogs", {})
+    album_artist = join_artists(rg["artist-credit"])
     lines = ["[album]", ""]
     lines.append(f'ALBUMARTIST = "{album_artist}"')
-    lines.append(f'ALBUM = "{rel["title"]}"')
+    lines.append(f'ALBUM = "{rg["title"]}"')
     lines.append("")
-    lines.append(f'MUSICBRAINZ_RELEASE_URL = "https://musicbrainz.org/release/{rel["id"]}"')
+    if not is_rg and rel:
+        lines.append(f'MUSICBRAINZ_RELEASE_URL = "https://musicbrainz.org/release/{rel["id"]}"')
     lines.append(f'MUSICBRAINZ_RELEASEGROUP_URL = "https://musicbrainz.org/release-group/{rg["id"]}"')
     lines.append("")
-    lines.append(f'MUSICBRAINZ_ALBUMID = "{rel["id"]}"')
-    lines.append(f'MUSICBRAINZ_ALBUMARTISTID = "{rel["artist-credit"][0]["artist"]["id"]}"')
+    if not is_rg and rel:
+        lines.append(f'MUSICBRAINZ_ALBUMID = "{rel["id"]}"')
+    lines.append(f'MUSICBRAINZ_ALBUMARTISTID = "{rg["artist-credit"][0]["artist"]["id"]}"')
     lines.append(f'MUSICBRAINZ_RELEASEGROUPID = "{rg["id"]}"')
     lines.append("")
-    multi_disc = int(rel.get("medium-count", 1)) > 1
-    for medium in rel.get("medium-list", []):
-        disc_num = int(medium["position"])
-        for track in medium.get("track-list", []):
-            track_artist = join_artists(track["artist-credit"])
+    if not is_rg and rel:
+        multi_disc = int(rel.get("medium-count", 1)) > 1
+        for medium in rel.get("medium-list", []):
+            disc_num = int(medium["position"])
+            for track in medium.get("track-list", []):
+                t_artist = join_artists(track["artist-credit"])
+                lines.append("[[tracks]]")
+                if multi_disc: lines.append(f"DISCNUMBER = {disc_num}")
+                lines.append(f"TRACKNUMBER = {int(track['number'])}")
+                lines.append(f'TITLE = "{track["recording"]["title"]}"')
+                if t_artist != album_artist: lines.append(f'ARTIST = "{t_artist}"')
+                lines.append(f'MUSICBRAINZ_TRACKID = "{track["recording"]["id"]}"')
+                lines.append(f'MUSICBRAINZ_RELEASETRACKID = "{track["id"]}"')
+                lines.append(f'MUSICBRAINZ_ARTISTID = "{track["artist-credit"][0]["artist"]["id"]}"')
+                lines.append("")
+    elif is_rg and "master" in dg:
+        tracks = [t for t in dg["master"].get("tracklist", []) if t.get("type_") == "track"]
+        for i, track in enumerate(tracks, 1):
             lines.append("[[tracks]]")
-            if multi_disc:
-                lines.append(f"DISCNUMBER = {disc_num}")
-            lines.append(f"TRACKNUMBER = {int(track['number'])}")
-            lines.append(f'TITLE = "{track["recording"]["title"]}"')
-            if track_artist != album_artist:
-                lines.append(f'ARTIST = "{track_artist}"')
-            lines.append(f'MUSICBRAINZ_TRACKID = "{track["recording"]["id"]}"')
-            lines.append(f'MUSICBRAINZ_RELEASETRACKID = "{track["id"]}"')
-            lines.append(f'MUSICBRAINZ_ARTISTID = "{track["artist-credit"][0]["artist"]["id"]}"')
+            lines.append(f"TRACKNUMBER = {i}")
+            lines.append(f'TITLE = "{track.get("title", "")}"')
             lines.append("")
     return lines
 
 def get_metadata_lines(data):
+    is_rg = data.get("_is_rg", False)
     mb = data["musicbrainz"]
-    rel = mb["release"]
     rg = mb["release_group"]
+    rel = mb.get("release")
     dg = data.get("discogs", {})
-    album_artist = join_artists(rel["artist-credit"])
-    ctdb = get_ctdb_id(".")
+    album_artist = join_artists(rg["artist-credit"])
+    ctdb = get_ctdb_id(".") if not is_rg else None
     gen_keys = [
         ("ALBUMARTIST", album_artist),
-        ("ALBUM", rel["title"]),
+        ("ALBUM", rg["title"]),
         ("DATE", rg.get("first-release-date", "")[:4]),
         None
     ]
@@ -241,15 +258,21 @@ def get_metadata_lines(data):
         gen_keys.append(None)
     gen_keys.append(("ORIGINAL_YYYY_MM", fmt_yyyy_mm(rg.get("first-release-date", ""))))
     gen_keys.append(None)
-    gen_keys.append(("COUNTRY", rel.get("country", "")))
-    label_info = rel.get("label-info-list", [{}])[0]
-    gen_keys.append(("LABEL", label_info.get("label", {}).get("name", "")))
-    gen_keys.append(("CATALOGNUMBER", label_info.get("catalog-number", "")))
-    gen_keys.append(("RELEASE_YYYY_MM", fmt_yyyy_mm(rel.get("date", ""))))
-    gen_keys.append(None)
-    if "release" in dg:
-        gen_keys.append(("DISCOGS_URL", f"https://discogs.com/release/{dg['release'].get('id')}"))
-    gen_keys.append(("MUSICBRAINZ_URL", f"https://musicbrainz.org/release/{rel['id']}"))
+    if not is_rg and rel:
+        gen_keys.append(("COUNTRY", rel.get("country", "")))
+        label_info = rel.get("label-info-list", [{}])[0]
+        gen_keys.append(("LABEL", label_info.get("label", {}).get("name", "")))
+        gen_keys.append(("CATALOGNUMBER", label_info.get("catalog-number", "")))
+        gen_keys.append(("RELEASE_YYYY_MM", fmt_yyyy_mm(rel.get("date", ""))))
+        gen_keys.append(None)
+    if is_rg:
+        if "master" in dg:
+            gen_keys.append(("DISCOGS_URL", f"https://discogs.com/master/{dg['master'].get('id')}"))
+        gen_keys.append(("MUSICBRAINZ_URL", f"https://musicbrainz.org/release-group/{rg['id']}"))
+    else:
+        if "release" in dg:
+            gen_keys.append(("DISCOGS_URL", f"https://discogs.com/release/{dg['release'].get('id')}"))
+        gen_keys.append(("MUSICBRAINZ_URL", f"https://musicbrainz.org/release/{rel['id']}"))
     if ctdb:
         gen_keys.append(("CTDBID_URL", f"http://db.cuetools.net/?tocid={ctdb}"))
     gen_map = {item[0]: item[1] for item in gen_keys if item is not None}
@@ -258,31 +281,33 @@ def get_metadata_lines(data):
         with open("metadata.toml", "rb") as f:
             existing_album = tomllib.load(f).get("album", {})
             for k, v in existing_album.items():
-                if k not in gen_map:
-                    extra_album[k] = v
+                if k not in gen_map: extra_album[k] = v
     lines = ["[album]", ""]
     for entry in gen_keys:
-        if entry is None:
-            lines.append("")
-        else:
-            lines.append(f'{entry[0]} = {toml_val(entry[1])}')
+        if entry is None: lines.append("")
+        else: lines.append(f'{entry[0]} = {toml_val(entry[1])}')
     if extra_album:
         lines.append("")
-        for k, v in extra_album.items():
-            lines.append(f'{k} = {toml_val(v)}')
+        for k, v in extra_album.items(): lines.append(f'{k} = {toml_val(v)}')
     lines.append("")
-    multi_disc = int(rel.get("medium-count", 1)) > 1
-    for medium in rel.get("medium-list", []):
-        disc_num = int(medium["position"])
-        for track in medium.get("track-list", []):
-            track_artist = join_artists(track["artist-credit"])
+    if not is_rg and rel:
+        multi_disc = int(rel.get("medium-count", 1)) > 1
+        for medium in rel.get("medium-list", []):
+            disc_num = int(medium["position"])
+            for track in medium.get("track-list", []):
+                t_artist = join_artists(track["artist-credit"])
+                lines.append("[[tracks]]")
+                if multi_disc: lines.append(f"DISCNUMBER = {disc_num}")
+                lines.append(f"TRACKNUMBER = {int(track['number'])}")
+                lines.append(f'TITLE = "{track["recording"]["title"]}"')
+                if t_artist != album_artist: lines.append(f'ARTIST = "{t_artist}"')
+                lines.append("")
+    elif is_rg and "master" in dg:
+        tracks = [t for t in dg["master"].get("tracklist", []) if t.get("type_") == "track"]
+        for i, track in enumerate(tracks, 1):
             lines.append("[[tracks]]")
-            if multi_disc:
-                lines.append(f"DISCNUMBER = {disc_num}")
-            lines.append(f"TRACKNUMBER = {int(track['number'])}")
-            lines.append(f'TITLE = "{track["recording"]["title"]}"')
-            if track_artist != album_artist:
-                lines.append(f'ARTIST = "{track_artist}"')
+            lines.append(f"TRACKNUMBER = {i}")
+            lines.append(f'TITLE = "{track.get("title", "")}"')
             lines.append("")
     return lines
 
@@ -297,16 +322,14 @@ def main():
         data = fetch_remote_metadata(target)
         if not data: sys.exit(1)
         final_lines = []
-        if "--mbid" in flags:
-            final_lines.extend(get_mbid_lines(data))
+        if "--mbid" in flags: final_lines.extend(get_mbid_lines(data))
         if "--metadata" in flags:
             if final_lines: final_lines.append("")
             final_lines.extend(get_metadata_lines(data))
         if not flags:
             sys.stdout.write(json.dumps(data, indent=2, sort_keys=True))
             return
-        output = "\n".join(final_lines).rstrip()
-        sys.stdout.write(output)
+        sys.stdout.write("\n".join(final_lines).rstrip())
     else:
         calculate_local_ids(target)
 
