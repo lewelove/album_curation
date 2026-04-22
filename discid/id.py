@@ -313,11 +313,22 @@ def get_metadata_lines(data):
 
 def main():
     args = sys.argv[1:]
-    if not args:
-        calculate_local_ids(".")
+    flags = [a for a in args if a.startswith("--")]
+    pos_args = [a for a in args if not a.startswith("--")]
+    target = pos_args[0] if pos_args else None
+    if not target and flags:
+        if "--metadata" in flags or "--mbid" in flags:
+            if os.path.exists("metadata.toml"):
+                with open("metadata.toml", "rb") as f:
+                    meta = tomllib.load(f)
+                    target = meta.get("album", {}).get("MUSICBRAINZ_URL")
+    if not target:
+        if not flags:
+            calculate_local_ids(".")
+        else:
+            sys.stderr.write("Error: No URL provided and MUSICBRAINZ_URL not found in metadata.toml\n")
+            sys.exit(1)
         return
-    target = args[0]
-    flags = args[1:]
     if target.startswith("http"):
         data = fetch_remote_metadata(target)
         if not data: sys.exit(1)
