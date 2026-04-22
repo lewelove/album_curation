@@ -24,19 +24,7 @@
           runtimeInputs = [ pythonEnv pkgs.libdiscid ];
           text = ''
             export LD_LIBRARY_PATH="${pkgs.libdiscid}/lib"
-            exec python ${./discid/id.py} "''${1:-.}"
-          '';
-        };
-
-        mbidScript = pkgs.writeShellApplication {
-          name = "mbid";
-          runtimeInputs = [ pythonEnv ];
-          text = ''
-            if [ -z "''${1:-}" ]; then
-              echo "Usage: mbid {musicbrainz_url}"
-              exit 1
-            fi
-            exec python ${./mbid/mbid.py} "$1"
+            exec python ${./discid/id.py} "$@"
           '';
         };
 
@@ -66,7 +54,6 @@
 
         buildAll = pkgs.writeShellScriptBin "build" ''
           nix build .#discid -o discid/.build
-          nix build .#mbid -o mbid/.build
           nix build .#album_write -o album_write/.build
           nix build .#album_split -o album_split/.build
           nix build .#cover_resize -o cover_resize/.build
@@ -76,7 +63,6 @@
       {
         packages = {
           discid = discidScript;
-          mbid = mbidScript;
           album_write = albumWriteScript;
           album_split = albumSplitScript;
           cover_resize = coverResizeScript;
@@ -95,7 +81,6 @@
             pythonEnv 
             pkgs.libdiscid 
             discidScript
-            mbidScript
             albumWriteScript
             albumSplitScript
             coverResizeScript
