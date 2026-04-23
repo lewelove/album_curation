@@ -9,12 +9,31 @@ if ! command -v magick &> /dev/null; then
 fi
 
 MONOCHROME=false
+FILTER="Mitchell"
 INPUT_ARG=""
 
 for arg in "$@"; do
     case $arg in
         --monochrome|--mono)
             MONOCHROME=true
+            ;;
+        --mitchell)
+            FILTER="Mitchell"
+            ;;
+        --lanczos)
+            FILTER="Lanczos"
+            ;;
+        --spline)
+            FILTER="Spline"
+            ;;
+        --catrom)
+            FILTER="Catrom"
+            ;;
+        --robidoux)
+            FILTER="Robidoux"
+            ;;
+        --quadratic)
+            FILTER="Quadratic"
             ;;
         *)
             INPUT_ARG="$arg"
@@ -23,7 +42,7 @@ for arg in "$@"; do
 done
 
 if [ -z "$INPUT_ARG" ]; then
-    echo "Usage: $0 [--monochrome] <image_file>"
+    echo "Usage: $0 [--monochrome] [--mitchell|--lanczos|--spline|--catrom|--robidoux|--quadratic] <image_file>"
     exit 1
 fi
 
@@ -66,6 +85,8 @@ fi
 
 process_size() {
     local TARGET_SIZE="$1"
+    local FILTER_LOWER
+    FILTER_LOWER=$(echo "$FILTER" | tr '[:upper:]' '[:lower:]')
 
     if [ "$ORIG_W" -eq "$TARGET_SIZE" ]; then
         if [ "$MONOCHROME" = false ]; then
@@ -82,36 +103,25 @@ process_size() {
         return
     fi
 
+    local INTERNAL_CS="RGB"
+    [ "$TARGET_SIZE" -gt "$ORIG_W" ] && INTERNAL_CS="Oklab"
+
+    local FILENAME="${FILE_PATH}${MONO_SUFFIX}+${FILTER_LOWER}+${TARGET_SIZE}.png"
+    local OUT_PATH="${OUT_DIR}/${FILENAME}"
+
+    magick "$INPUT_PATH" \
+        "${PRE_MONO[@]}" \
+        -colorspace "$INTERNAL_CS" \
+        -filter "$FILTER" \
+        -distort Resize "${TARGET_SIZE}x${TARGET_SIZE}" \
+        "${POST_MONO[@]}" \
+        -colorspace sRGB \
+        -strip \
+        "$OUT_PATH"
+
     if [ "$TARGET_SIZE" -gt "$ORIG_W" ]; then
-        local FILENAME="${FILE_PATH}${MONO_SUFFIX}+lanczos+${TARGET_SIZE}.png"
-        local OUT_PATH="${OUT_DIR}/${FILENAME}"
-
-        magick "$INPUT_PATH" \
-            "${PRE_MONO[@]}" \
-            -colorspace Oklab \
-            -filter Lanczos \
-            -distort Resize "${TARGET_SIZE}x${TARGET_SIZE}" \
-            "${POST_MONO[@]}" \
-            -colorspace sRGB \
-            -strip \
-            "$OUT_PATH"
-
         echo "[+] > [${TARGET_SIZE}] $FILENAME [Upscaled]"
-        
     else
-        local FILENAME="${FILE_PATH}${MONO_SUFFIX}+lanczos+${TARGET_SIZE}.png"
-        local OUT_PATH="${OUT_DIR}/${FILENAME}"
-
-        magick "$INPUT_PATH" \
-            "${PRE_MONO[@]}" \
-            -colorspace RGB \
-            -filter Lanczos \
-            -distort Resize "${TARGET_SIZE}x${TARGET_SIZE}" \
-            "${POST_MONO[@]}" \
-            -colorspace sRGB \
-            -strip \
-            "$OUT_PATH"
-
         echo "[-] > [${TARGET_SIZE}] $FILENAME [Downscaled]"
     fi
 }
@@ -119,8 +129,8 @@ process_size() {
 MODE_STR="Color"
 [ "$MONOCHROME" = true ] && MODE_STR="Monochrome"
 
-echo "[>] Starting Resampling for: $INPUT_ARG [${ORIG_W}x${ORIG_H}px] [$MODE_STR]"
+echo "[>] Starting Resampling for: $INPUT_ARG [${ORIG_W}x${ORIG_H}px] [$MODE_STR] [Filter: $FILTER]"
 
 process_size 1080
-process_size 1440
-process_size 2160
+# process_size 1440
+# process_size 2160
