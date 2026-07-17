@@ -7,30 +7,21 @@ import mimetypes
 import xxhash
 from mutagen.flac import FLAC, Picture
 
-SYNC_TAGS =[
-    "ALBUM",
-    "ALBUMARTIST",
-    "DATE",
-    "GENRE",
-    "COMMENT",
-    "TITLE",
-    "ARTIST",
-    "DISCOGS_URL",
-    "MUSICBRAINZ_URL",
-    "REPLAYGAIN_TRACK_GAIN",
-    "REPLAYGAIN_ALBUM_GAIN",
+SYNC_TAGS = [
+    "ALBUM", "ALBUMARTIST", "DATE", "GENRE", "COMMENT",
+    "TITLE", "ARTIST", "DISCOGS_URL", "MUSICBRAINZ_URL",
+    "REPLAYGAIN_TRACK_GAIN", "REPLAYGAIN_ALBUM_GAIN"
 ]
 
 def fmt(val):
-    return val if val else "(empty)"
+    return str(val) if val else ""
 
 def get_hash(data):
     h = xxhash.xxh64(data).digest()
     return base64.urlsafe_b64encode(h).decode("ascii").rstrip("=")
 
 def process_album(target_dir):
-    lock_file = os.path.join(target_dir, "metadata.lock.json")
-
+    lock_file = os.path.join(target_dir, "album.lock.json")
     if not os.path.isfile(lock_file):
         return
 
@@ -38,24 +29,21 @@ def process_album(target_dir):
         data = json.load(f)
 
     album_obj = data.get("album", {})
-    album_info = album_obj.get("info", {})
-
-    if album_info.get("file_tag_subset_match", False):
-        return
-
-    tracks_data = data.get("tracks",[])
+    tracks_data = data.get("tracks", [])
     if not tracks_data:
         return
 
-    album_pool = {k.upper(): v for k, v in album_obj.items() if k not in ["info", "tags"]}
-    if "tags" in album_obj:
-        album_pool.update({k.upper(): v for k, v in album_obj["tags"].items()})
+    exclude_keys = {"info", "tags", "keys", "covers", "manifests", "file", "id"}
+    album_pool = {k.upper(): v for k, v in album_obj.items() if k not in exclude_keys and not isinstance(v, dict)}
+    for pool_key in ["tags", "keys"]:
+        if pool_key in album_obj:
+            album_pool.update({k.upper(): v for k, v in album_obj[pool_key].items()})
 
-    total_discs = album_info.get("total_discs", 1)
-    total_tracks = album_info.get("total_tracks", 0)
-    cover_filename = album_info.get("cover_path", "cover.png")
+    total_discs = album_obj.get("total_discs", 1)
+    
+    cover_filename = album_obj.get("covers", {}).get("main", {}).get("file", {}).get("path", "cover.png")
     cover_path = os.path.join(target_dir, cover_filename)
-
+    
     disk_cover_data = None
     disk_cover_hash = None
     if os.path.exists(cover_path):
@@ -63,7 +51,7 @@ def process_album(target_dir):
             disk_cover_data = cf.read()
         disk_cover_hash = get_hash(disk_cover_data)
 
-    first_track_path = os.path.join(target_dir, tracks_data[0]["info"]["track_path"])
+    first_track_path = os.path.join(target_dir, tracks_data[0].get("file", {}).get("path", ""))
     first_audio = FLAC(first_track_path)
     embedded_cover_hash = None
     if first_audio.pictures:
@@ -74,90 +62,109 @@ def process_album(target_dir):
 
     update_cover = (disk_cover_hash is not None) and (embedded_cover_hash != disk_cover_hash)
 
-    target_tags_per_track =[]
+    tasks = []
     for t in tracks_data:
+        t_info = t.get("info", {})
+        t_file = t.get("file", {})
+        rel_path = t_file.get("path")
+        if not rel_path:
+            continue
+
+        needs_tags = not t_info.get("embedded_keys_subset_match", False)
+        
         target_tags = {}
-        track_pool = {k.upper(): v for k, v in t.items() if k not in ["info", "tags"]}
-        if "tags" in t:
-            track_pool.update({k.upper(): v for k, v in t["tags"].items()})
+        if needs_tags:
+            track_pool = {k.upper(): v for k, v in t.items() if k not in exclude_keys and not isinstance(v, dict)}
+            for pool_key in ["tags", "keys"]:
+                if pool_key in t:
+                    track_pool.update({k.upper(): v for k, v in t[pool_key].items()})
 
-        for tag_name in SYNC_TAGS:
-            val = track_pool.get(tag_name)
-            if val is None:
-                val = album_pool.get(tag_name)
+            for tag_name in SYNC_TAGS:
+                val = track_pool.get(tag_name, album_pool.get(tag_name))
+                if val is not None:
+                    target_tags[tag_name] = "; ".join(val) if isinstance(val, list) else str(val)
+
+            target_tags["ARTIST"] = str(track_pool.get("ARTIST", ""))
+            target_tags["TITLE"] = str(track_pool.get("TITLE", ""))
+            target_tags["TRACKNUMBER"] = str(track_pool.get("TRACKNUMBER", "0"))
             
-            if val is not None:
-                if tag_name == "GENRE" and isinstance(val, list):
-                    target_tags[tag_name] = "; ".join(val)
-                else:
-                    target_tags[tag_name] = str(val)
-
-        target_tags["ARTIST"] = str(track_pool.get("ARTIST", ""))
-        target_tags["TITLE"] = str(track_pool.get("TITLE", ""))
-        target_tags["TRACKNUMBER"] = str(track_pool.get("TRACKNUMBER", "0"))
+            if total_discs > 1:
+                target_tags["DISCNUMBER"] = str(track_pool.get("DISCNUMBER", "1"))
         
-        if total_discs > 1:
-            target_tags["DISCNUMBER"] = str(track_pool.get("DISCNUMBER", "1"))
-        
-        target_tags_per_track.append((t["info"]["track_path"], target_tags))
+        tasks.append({
+            "path": rel_path,
+            "needs_tags": needs_tags,
+            "target_tags": target_tags,
+            "diffs": []
+        })
 
-    all_diffs =[]
-    diff_counts = {}
+    # Generate tag differences
+    for task in tasks:
+        if not task["needs_tags"]:
+            continue
 
-    for rel_path, target_tags in target_tags_per_track:
-        track_file = os.path.join(target_dir, rel_path)
+        track_file = os.path.join(target_dir, task["path"])
         audio = FLAC(track_file)
-        track_changes =[]
-        target_keys = set(target_tags.keys())
-
+        target_keys = set(task["target_tags"].keys())
+        diffs = []
+        
         for old_tag in list(audio.keys()):
             u_old = old_tag.upper()
             if u_old not in target_keys:
-                old_val = audio[old_tag][0] if audio[old_tag] else ""
-                track_changes.append((u_old, old_val, "(delete)"))
+                diffs.append(f"\033[31m- {u_old}\033[0m")
 
-        for tag, new_val in target_tags.items():
-            old_vals = audio.get(tag, audio.get(tag.lower(),[]))
+        for tag, new_val in task["target_tags"].items():
+            old_vals = audio.get(tag, audio.get(tag.lower(), []))
             old_val = old_vals[0] if old_vals else ""
             if str(old_val) != str(new_val):
-                track_changes.append((tag, old_val, new_val))
-        
-        all_diffs.append({"path": rel_path, "changes": track_changes})
-        for change in track_changes:
-            diff_counts[change] = diff_counts.get(change, 0) + 1
+                if not old_val:
+                    diffs.append(f"\033[32m+ {tag}: \033[90m{new_val}\033[0m")
+                else:
+                    diffs.append(f"\033[34m~ {tag}: \033[90m{old_val} -> {new_val}\033[0m")
 
-    album_diffs =[ch for ch, count in diff_counts.items() if count == len(tracks_data)]
-    
-    track_diffs_output =[]
-    for td in all_diffs:
-        uniques = [c for c in td["changes"] if c not in album_diffs]
-        if uniques:
-            track_diffs_output.append({"path": td["path"], "changes": uniques})
+        task["diffs"] = diffs
 
-    if not (update_cover or album_diffs or track_diffs_output):
-        print(f"No changes needed for {target_dir}")
+    # Extract common "Album Diff" intersections
+    active_tasks = [t for t in tasks if t["needs_tags"]]
+    common_diffs = []
+    if len(active_tasks) > 1:
+        first_diffs = active_tasks[0]["diffs"]
+        for d in first_diffs:
+            if all(d in t["diffs"] for t in active_tasks):
+                common_diffs.append(d)
+                
+        for t in active_tasks:
+            t["diffs"] = [d for d in t["diffs"] if d not in common_diffs]
+
+    has_actual_changes = update_cover or bool(common_diffs) or any(t["diffs"] for t in active_tasks)
+    if not has_actual_changes:
         return
 
-    print(f"\n--- Changes for {target_dir} ---")
+    if target_dir != ".":
+        print(f"\n\033[1;36m{target_dir}\033[0m")
+    else:
+        print()
+
     if update_cover:
-        print(f"COVER MISMATCH: {fmt(embedded_cover_hash)} -> {fmt(disk_cover_hash)}")
-    
-    if album_diffs:
-        print("ALBUM DIFF:")
-        print()
-        for tag, old, new in album_diffs:
-            print(f"{tag}: {fmt(old)} -> {fmt(new)}")
-        print()
+        print("\033[33m🖼️  Cover update required\033[0m")
 
-    if track_diffs_output:
-        print("TRACK DIFF:")
-        print()
-        for td in track_diffs_output:
-            print(td["path"])
-            for tag, old, new in td["changes"]:
-                print(f"  {tag}: {fmt(old)} -> {fmt(new)}")
+    if common_diffs:
+        print("\033[1;34m💿 Album Diff\033[0m")
+        for d in common_diffs:
+            print(f"   {d}")
 
-    ans = input(f"\nProceed with {target_dir}? y/n: ").strip().lower()
+    for task in tasks:
+        if task["diffs"]:
+            print(f"\033[1m🎵 {task['path']}\033[0m")
+            for d in task["diffs"]:
+                print(f"   {d}")
+
+    try:
+        ans = input(f"\n\033[1;35mApply changes? [y/N]: \033[0m").strip().lower()
+    except KeyboardInterrupt:
+        print("\nAborted.")
+        sys.exit(0)
+        
     if ans not in ('y', 'yes'):
         return
 
@@ -169,23 +176,31 @@ def process_album(target_dir):
         new_pic.mime = mimetypes.guess_type(cover_path)[0] or "image/jpeg"
         new_pic.desc = "Front Cover"
 
-    for rel_path, target_tags in target_tags_per_track:
+    for task in tasks:
+        rel_path = task["path"]
         audio = FLAC(os.path.join(target_dir, rel_path))
-        for old_tag in list(audio.keys()):
-            if old_tag.upper() not in target_tags:
-                del audio[old_tag]
-        for tag, val in target_tags.items():
-            audio[tag] = [val]
+        
+        if task["needs_tags"]:
+            target_tags = task["target_tags"]
+            for old_tag in list(audio.keys()):
+                if old_tag.upper() not in target_tags:
+                    del audio[old_tag]
+            for tag, val in target_tags.items():
+                audio[tag] = [val]
+        
         if update_cover:
             audio.clear_pictures()
             audio.add_picture(new_pic)
+            
         audio.save()
+        
+    print("\033[32m✔ Done.\033[0m")
 
 def main():
     if len(sys.argv) > 1:
         base_dir = sys.argv[1]
         for root, dirs, files in os.walk(base_dir):
-            if "metadata.lock.json" in files:
+            if "album.lock.json" in files:
                 process_album(root)
     else:
         process_album(".")
