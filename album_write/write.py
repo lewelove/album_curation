@@ -98,7 +98,6 @@ def process_album(target_dir):
             "diffs": []
         })
 
-    # Generate tag differences
     for task in tasks:
         if not task["needs_tags"]:
             continue
@@ -111,7 +110,9 @@ def process_album(target_dir):
         for old_tag in list(audio.keys()):
             u_old = old_tag.upper()
             if u_old not in target_keys:
-                diffs.append(f"\033[31m- {u_old}\033[0m")
+                old_vals = audio.get(old_tag, [])
+                old_val = "; ".join(old_vals) if isinstance(old_vals, list) else str(old_vals)
+                diffs.append(f"\033[31m- {u_old}: \033[90m{old_val}\033[0m")
 
         for tag, new_val in task["target_tags"].items():
             old_vals = audio.get(tag, audio.get(tag.lower(), []))
@@ -124,7 +125,6 @@ def process_album(target_dir):
 
         task["diffs"] = diffs
 
-    # Extract common "Album Diff" intersections
     active_tasks = [t for t in tasks if t["needs_tags"]]
     common_diffs = []
     if len(active_tasks) > 1:
