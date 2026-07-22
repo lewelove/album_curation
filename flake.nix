@@ -47,9 +47,9 @@
 
         albumSplitScript = pkgs.writeShellApplication {
           name = "album_split";
-          runtimeInputs = [ pkgs.shntool pkgs.cuetools pkgs.flac ];
+          runtimeInputs = [ pythonEnv pkgs.ffmpeg-full ];
           text = ''
-            exec bash ${./album_split/split.sh} "''${1:-.}"
+            exec python ${./album_split/split.py} "$@"
           '';
         };
 
@@ -63,9 +63,17 @@
 
         albumResampleScript = pkgs.writeShellApplication {
           name = "album_to_44100hz";
-          runtimeInputs = [ pkgs.ffmpeg ];
+          runtimeInputs = [ pkgs.ffmpeg-full ];
           text = ''
             exec bash ${./album_to_44100hz/resample.sh} "''${1:-.}"
+          '';
+        };
+
+        mbManifestScript = pkgs.writeShellApplication {
+          name = "mb_manifest";
+          runtimeInputs = [ pythonEnv ];
+          text = ''
+            exec python ${./mb_manifest/manifest.py} "$@"
           '';
         };
 
@@ -93,7 +101,7 @@
             "rsdiscid")
               build_rust
               ;;
-            "discid" | "album_write" | "album_setup" | "album_split" | "cover_resize" | "album_to_44100hz")
+            "discid" | "album_write" | "album_setup" | "album_split" | "cover_resize" | "album_to_44100hz" | "mb_manifest")
               build_nix_tool "$TARGET"
               ;;
             "all")
@@ -103,6 +111,7 @@
               build_nix_tool "album_split"
               build_nix_tool "cover_resize"
               build_nix_tool "album_to_44100hz"
+              build_nix_tool "mb_manifest"
               build_rust
               ;;
             *)
@@ -119,6 +128,7 @@
           album_split = albumSplitScript;
           cover_resize = coverResizeScript;
           album_to_44100hz = albumResampleScript;
+          mb_manifest = mbManifestScript;
           build = buildAll;
           default = buildAll;
         };
@@ -127,6 +137,7 @@
           discid = flake-utils.lib.mkApp { drv = discidScript; };
           album_write = flake-utils.lib.mkApp { drv = albumWriteScript; };
           album_setup = flake-utils.lib.mkApp { drv = albumSetupScript; };
+          mb_manifest = flake-utils.lib.mkApp { drv = mbManifestScript; };
           build = {
             type = "app";
             program = "${buildAll}/bin/build";
@@ -148,6 +159,7 @@
             albumSetupScript
             albumSplitScript
             coverResizeScript
+            mbManifestScript
             buildAll
           ];
           shellHook = ''
